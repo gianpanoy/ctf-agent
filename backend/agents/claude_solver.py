@@ -180,20 +180,26 @@ class ClaudeSolver:
                         }
                     }
 
-                # Intercept report_finding commands (vuln mode) — write report and mark done
-                report_match = re.match(r"report_finding\s+(.+)$", command.strip(), re.DOTALL)
-                if report_match:
-                    report_payload = report_match.group(1).strip().strip("'\"")
+                # Intercept report_finding commands (vuln mode) — write report and mark done.
+                # The investigator calls: report_finding '<json_payload>'
+                # We use shlex.split() so the payload is correctly extracted regardless of
+                # whether the agent wraps it in single quotes, double quotes, or no quotes.
+                if command.strip().startswith("report_finding"):
+                    try:
+                        parts = shlex.split(command.strip())
+                        report_payload = parts[1] if len(parts) > 1 else ""
+                    except ValueError:
+                        # shlex failed (unclosed quotes) — fall back to raw suffix
+                        report_payload = command.strip()[len("report_finding"):].strip().strip("'\"")
                     self._flag = report_payload
                     self._confirmed = True
                     self.tracer.event("report_submitted", step=self._step_count)
-                    # Persist the report to the challenge dir for the reporter module
-                    import json
+                    import json as _json
                     report_path = f"{self.challenge_dir}/vuln_report.json"
                     try:
-                        parsed = json.loads(report_payload)
-                        report_json = json.dumps(parsed, indent=2)
-                    except (json.JSONDecodeError, ValueError):
+                        parsed = _json.loads(report_payload)
+                        report_json = _json.dumps(parsed, indent=2)
+                    except (_json.JSONDecodeError, ValueError):
                         report_json = report_payload
                     return {
                         "hookSpecificOutput": {

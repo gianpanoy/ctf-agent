@@ -287,16 +287,6 @@ async def run_vuln_coordinator(
     stub_ctfd = VulnTargetClient(challenge_metas)
     cost_tracker = CostTracker()
 
-    # Inject investigator-specific prompts and output schemas into swarm creation.
-    # We monkey-patch the solver factory inside ChallengeSwarm via a settings flag.
-    settings_with_vuln = settings
-    object.__setattr__(settings_with_vuln, "_vuln_mode", True) if hasattr(settings, "__dataclass_fields__") else None
-    # Use a simpler attribute approach
-    try:
-        settings.vuln_mode = True  # type: ignore[attr-defined]
-    except AttributeError:
-        pass
-
     deps = CoordinatorDeps(
         ctfd=stub_ctfd,  # type: ignore[arg-type]
         cost_tracker=cost_tracker,
@@ -365,8 +355,16 @@ async def run_vuln_coordinator(
 def _patch_swarm_for_vuln_mode(deps: CoordinatorDeps, challenge_dirs: dict[str, str]) -> None:
     """Patch the swarm factory to inject vuln-specific prompts and output schemas.
 
-    We override the do_spawn_swarm helper's swarm creation by registering a
-    custom _create_solver callback that wraps ClaudeSolver with vuln mode params.
+    This function temporarily monkey-patches ``do_spawn_swarm`` in
+    ``coordinator_core`` so that each spawned swarm uses ``VulnChallengeSwarm``
+    instead of the default ``ChallengeSwarm``.  The original class is restored
+    inside a ``finally`` block on every call, so the patch is never permanent.
+
+    Trade-off: this approach avoids adding a swarm-factory parameter throughout
+    the coordinator stack (a more invasive refactor), at the cost of making the
+    relationship between ``vuln_coordinator`` and ``coordinator_core`` implicit.
+    A future refactor could pass a ``swarm_factory`` callable to
+    ``CoordinatorDeps`` or ``do_spawn_swarm`` instead.
     """
     from backend.agents import swarm as swarm_module
     base_swarm_cls = swarm_module.ChallengeSwarm

@@ -60,9 +60,19 @@ def load_targets(targets_file: str) -> list[TargetMeta]:
     ]
 
 
-def _safe_dir_name(text: str) -> str:
-    """Convert arbitrary text to a safe directory name."""
-    return re.sub(r"[^a-zA-Z0-9_-]", "_", text)[:60].strip("_")
+def _safe_dir_name(text: str, max_len: int = 50) -> str:
+    """Convert arbitrary text to a safe directory name.
+
+    Truncates to ``max_len`` characters to leave room for a hash suffix that
+    prevents collisions when two names share the same prefix.
+    """
+    slug = re.sub(r"[^a-zA-Z0-9_-]", "_", text)[:max_len].strip("_")
+    # Append a short 6-char hash so truncated names stay unique
+    if len(text) > max_len:
+        import hashlib
+        suffix = hashlib.sha1(text.encode()).hexdigest()[:6]
+        slug = f"{slug}_{suffix}"
+    return slug
 
 
 def create_vuln_challenge_dirs(

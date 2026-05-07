@@ -110,7 +110,7 @@ async def trivy_scan(
         raw = stdout.decode("utf-8", errors="replace")
         err_text = stderr.decode("utf-8", errors="replace")
 
-        if proc.returncode not in (0, 1):  # trivy returns 1 when vulns found
+        if proc.returncode not in (0, 1):  # 0 = clean, 1 = non-zero exit-code policy (default: disabled); anything else is an error
             logger.warning("Trivy exit %d: %s", proc.returncode, err_text[:500])
             return TrivyScanResult(
                 target_url=target_url,

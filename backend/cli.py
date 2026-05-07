@@ -297,8 +297,14 @@ async def _run_vuln_scan(
     all_scan_summaries: list[str] = []
     scan_target_urls: list[str] = []
 
-    # Use the first (most severe) threshold from the comma-separated severity list
-    min_severity = settings.trivy_severity.split(",")[0].strip().upper() or "HIGH"
+    # trivy_severity is the Trivy --severity filter (e.g. "CRITICAL,HIGH").
+    # For filtering findings we need a single minimum severity level, so we use
+    # the least-severe entry in the comma-separated list (last when sorted by priority).
+    # E.g. "CRITICAL,HIGH" → min_severity="HIGH" (keep both CRITICAL and HIGH).
+    severity_priority = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    severity_levels = [s.strip().upper() for s in settings.trivy_severity.split(",") if s.strip()]
+    # Pick the level with the highest priority number (least severe in the filter list)
+    min_severity = max(severity_levels, key=lambda s: severity_priority.get(s, 99), default="HIGH")
 
     for target in targets:
         console.print(f"  Trivy scanning: [cyan]{target.url}[/cyan]")
