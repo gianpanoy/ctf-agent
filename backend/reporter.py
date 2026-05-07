@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def write_json_report(findings: list[dict], output_path: str) -> None:
     """Write findings to a JSON file."""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     report = {
-        "generated_at": datetime.now(datetime.UTC).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),  # noqa: UP017
         "total_findings": len(findings),
         "findings": findings,
     }
@@ -63,7 +63,7 @@ def write_json_report(findings: list[dict], output_path: str) -> None:
 def write_markdown_report(findings: list[dict], output_path: str, scan_targets: list[str] | None = None) -> None:
     """Write findings to a Markdown report."""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    now = datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")  # noqa: UP017
 
     lines: list[str] = [
         "# Vulnerability Analysis Report",
