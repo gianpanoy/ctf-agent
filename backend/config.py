@@ -30,4 +30,10 @@ class Settings(BaseSettings):
     max_attempts_per_challenge: int = 3
     container_memory_limit: str = "16g"
 
+    # Vulnerability scanning mode
+    trivy_severity: str = "CRITICAL,HIGH"   # severities to scan and report
+    max_vuln_findings: int = 5              # max findings to investigate per target
+    report_output_dir: str = "vuln-reports" # directory for generated reports
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+

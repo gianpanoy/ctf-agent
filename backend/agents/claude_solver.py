@@ -52,6 +52,8 @@ class ClaudeSolver:
         submit_fn=None,
         message_bus=None,
         notify_coordinator=None,
+        system_prompt_override: str | None = None,
+        output_schema: dict | None = None,
     ) -> None:
         self.model_spec = model_spec
         self.model_id = model_id_from_spec(model_spec)
@@ -65,6 +67,8 @@ class ClaudeSolver:
         self.submit_fn = submit_fn
         self.message_bus = message_bus
         self.notify_coordinator = notify_coordinator
+        self._system_prompt_override = system_prompt_override
+        self._output_schema = output_schema
 
         self.sandbox = DockerSandbox(
             image=getattr(settings, "sandbox_image", "ctf-sandbox"),
@@ -93,19 +97,22 @@ class ClaudeSolver:
         arch_result = await self.sandbox.exec("uname -m", timeout_s=10)
         container_arch = arch_result.stdout.strip() or "unknown"
 
-        distfile_names = list_distfiles(self.challenge_dir)
-        sandbox_preamble = (
-            "IMPORTANT: You are running inside a Docker sandbox. "
-            "All files are under /challenge/ — distfiles at /challenge/distfiles/, "
-            "workspace at /challenge/workspace/. Do NOT use any paths outside /challenge/. "
-            "All bash commands run inside the container via docker exec. "
-            "Use bash for everything: cat/head to read files, tee/echo> to write, find/grep to search. "
-            "submit_flag 'FLAG' to submit. notify_coordinator 'MSG' to message the coordinator.\n\n"
-        )
-        system_prompt = sandbox_preamble + build_prompt(
-            self.meta, distfile_names, container_arch=container_arch,
-            has_named_tools=False,
-        )
+        if self._system_prompt_override:
+            system_prompt = self._system_prompt_override
+        else:
+            distfile_names = list_distfiles(self.challenge_dir)
+            sandbox_preamble = (
+                "IMPORTANT: You are running inside a Docker sandbox. "
+                "All files are under /challenge/ — distfiles at /challenge/distfiles/, "
+                "workspace at /challenge/workspace/. Do NOT use any paths outside /challenge/. "
+                "All bash commands run inside the container via docker exec. "
+                "Use bash for everything: cat/head to read files, tee/echo> to write, find/grep to search. "
+                "submit_flag 'FLAG' to submit. notify_coordinator 'MSG' to message the coordinator.\n\n"
+            )
+            system_prompt = sandbox_preamble + build_prompt(
+                self.meta, distfile_names, container_arch=container_arch,
+                has_named_tools=False,
+            )
 
         # PreToolUse hook: rewrite Bash commands to run in the sandbox container.
         # Block Read/Write/Edit — model should use bash for file access.
@@ -169,6 +176,41 @@ class ClaudeSolver:
                             "updatedInput": {
                                 **tool_input,
                                 "command": f"echo {shlex.quote(result_msg)}",
+                            },
+                        }
+                    }
+
+                # Intercept report_finding commands (vuln mode) — write report and mark done.
+                # The investigator calls: report_finding '<json_payload>'
+                # We use shlex.split() so the payload is correctly extracted regardless of
+                # whether the agent wraps it in single quotes, double quotes, or no quotes.
+                if command.strip().startswith("report_finding"):
+                    try:
+                        parts = shlex.split(command.strip())
+                        report_payload = parts[1] if len(parts) > 1 else ""
+                    except ValueError:
+                        # shlex failed (unclosed quotes) — fall back to raw suffix
+                        report_payload = command.strip()[len("report_finding"):].strip().strip("'\"")
+                    self._flag = report_payload
+                    self._confirmed = True
+                    self.tracer.event("report_submitted", step=self._step_count)
+                    import json as _json
+                    report_path = f"{self.challenge_dir}/vuln_report.json"
+                    try:
+                        parsed = _json.loads(report_payload)
+                        report_json = _json.dumps(parsed, indent=2)
+                    except (_json.JSONDecodeError, ValueError):
+                        report_json = report_payload
+                    return {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "permissionDecision": "allow",
+                            "updatedInput": {
+                                **tool_input,
+                                "command": (
+                                    f"echo {shlex.quote(report_json)} > {shlex.quote(report_path)}"
+                                    f" && echo 'Report submitted successfully.'"
+                                ),
                             },
                         }
                     }
@@ -253,6 +295,8 @@ class ClaudeSolver:
         from backend.models import effort_from_spec
         effort = effort_from_spec(self.model_spec)
 
+        output_schema = self._output_schema or solver_output_json_schema()
+
         options = ClaudeAgentOptions(
             model=self.model_id,
             system_prompt=system_prompt,
@@ -261,7 +305,7 @@ class ClaudeSolver:
             env={"CLAUDECODE": ""},
             allowed_tools=["Bash", "WebFetch", "WebSearch"],
             permission_mode="bypassPermissions",
-            output_format={"type": "json_schema", "schema": solver_output_json_schema()},
+            output_format={"type": "json_schema", "schema": output_schema},
             hooks={
                 "PreToolUse": [
                     HookMatcher(hooks=[sandbox_redirect]),
@@ -333,6 +377,14 @@ class ClaudeSolver:
                             self._findings = f"Flag found via {output.get('method', '?')}: {self._flag}"
                             if self.no_submit:
                                 self._confirmed = True
+                        elif output.get("type") == "vuln_found":
+                            import json as _json
+                            self._flag = _json.dumps({k: v for k, v in output.items() if k != "type"})
+                            self._findings = (
+                                f"Vulnerability analyzed: {output.get('cve_id', '?')} — "
+                                f"{output.get('root_cause', '')[:200]}"
+                            )
+                            self._confirmed = True
 
             self.tracer.event("turn_complete", duration=round(time.monotonic() - t0, 1), cost=round(self._cost_usd, 4))
 

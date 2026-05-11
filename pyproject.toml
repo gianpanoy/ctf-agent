@@ -20,6 +20,7 @@ dependencies = [
 [project.scripts]
 ctf-solve = "backend.cli:main"
 ctf-msg = "backend.cli:msg"
+vuln-scan = "backend.cli:vuln_scan"
 
 [build-system]
 requires = ["hatchling"]
